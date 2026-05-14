@@ -89,14 +89,19 @@ Respond ONLY with a JSON array (one entry per sender, same index), no markdown:
 
     // STRICT FILTER: only include if it's a real recurring sub or active trial
     if (c.type === 'paid') {
-      // Must be monthly or yearly — drop "occasional" / unknown
       if (c.frequency !== 'monthly' && c.frequency !== 'yearly') return null;
-      // Must have at least one signal of recurring billing: a recent charge OR a next billing date
-      if (!c.lastChargeDate && !c.nextBillingDate) return null;
-      // Drop if status is inactive
       if (c.status !== 'active') return null;
+
+      // For monthly: require 3+ consecutive months of actual charges
+      if (c.frequency === 'monthly') {
+        const months = distinctChargeMonths(sender.chargeDates || []);
+        if (!hasNConsecutiveMonths(months, 3)) return null;
+      }
+      // For yearly: require at least 1 actual charge in past 12 months
+      if (c.frequency === 'yearly') {
+        if (!sender.chargeDates || sender.chargeDates.length < 1) return null;
+      }
     } else if (c.type === 'trial') {
-      // Must have evidence this is an actual trial
       if (!c.trialExpiryDate && c.daysRemaining == null) return null;
     } else {
       return null;
@@ -163,4 +168,32 @@ function chunk(arr, size) {
   const chunks = [];
   for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
   return chunks;
+}
+
+// Return sorted array of distinct months (as YYYY-MM strings) that contain at least one charge
+function distinctChargeMonths(dates) {
+  const set = new Set();
+  for (const d of dates) {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) continue;
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    set.add(key);
+  }
+  return [...set].sort();
+}
+
+// True if the months array contains N consecutive calendar months (e.g. 2025-03, 2025-04, 2025-05)
+function hasNConsecutiveMonths(months, n) {
+  if (months.length < n) return false;
+  const toIndex = (m) => {
+    const [y, mo] = m.split('-').map(Number);
+    return y * 12 + (mo - 1);
+  };
+  const indices = months.map(toIndex);
+  let run = 1;
+  for (let i = 1; i < indices.length; i++) {
+    run = (indices[i] === indices[i - 1] + 1) ? run + 1 : 1;
+    if (run >= n) return true;
+  }
+  return false;
 }

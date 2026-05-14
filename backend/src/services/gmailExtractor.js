@@ -106,8 +106,9 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
         unsubscribeHeader: listUnsub || null,
         oneClickSupported: !!listUnsubPost,
         snippet,
-        subjects: [], // sample subjects for classifier context
-        snippets: [], // sample snippets containing amounts
+        subjects: [],
+        snippets: [],
+        chargeDates: [],     // all dates where subject suggests an actual charge
         billingEmailCount: 0,
         hasBillingEmails: false,
       });
@@ -115,6 +116,12 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
 
     const entry = senderMap.get(key);
     entry.emailCount++;
+
+    // Record charge dates — only emails that look like actual debits, not just newsletters
+    const isChargeEmail = /receipt|invoice|payment|charged|renewed|renewal|debited|debit alert|paid|billing|subscription (active|renewed|started)|"you have been charged"/i.test(subject + ' ' + snippet);
+    if (isChargeEmail && date) {
+      entry.chargeDates.push(date);
+    }
 
     // Keep up to 5 distinct subject samples
     if (entry.subjects.length < 5 && subject && !entry.subjects.includes(subject)) {
