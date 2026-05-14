@@ -66,28 +66,34 @@ Respond with ONLY a JSON array (one entry per sender), no markdown, no explanati
     }));
   }
 
-  // Build subscription objects — include any sender Gemini flagged OR any with unsubscribe header
+  // Build subscription objects — include any sender Gemini flagged OR any with unsubscribe header OR any with billing emails
   return senders.map((sender, i) => {
     const c = classifications.find(x => x.index === i + 1);
     const hasUnsub = !!sender.unsubscribeHeader;
+    const hasBilling = !!sender.hasBillingEmails;
 
-    // Include if Gemini says yes OR if we have an unsubscribe header (definitive signal)
-    const include = (c?.isSubscription) || hasUnsub;
+    // Include if Gemini says yes OR has unsubscribe header OR has billing emails
+    const include = (c?.isSubscription) || hasUnsub || hasBilling;
     if (!include) return null;
 
     const { url: unsubscribeUrl, method: unsubscribeMethod, email: unsubscribeEmail } =
       parseUnsubscribeHeader(sender.unsubscribeHeader);
 
+    // If we saw receipts/invoices, this is definitely paid regardless of Gemini's guess
+    const isPaid = hasBilling || c?.isPaid || false;
+
     return {
       id: `sub_${sender.domain.replace(/\./g, '_')}_${Date.now()}_${i}`,
       serviceName: c?.serviceName || sender.senderName || sender.domain,
       category: c?.category || 'other',
-      isPaid: c?.isPaid || false,
+      isPaid,
       frequency: c?.frequency || 'occasional',
       senderEmail: sender.senderEmail,
       senderName: sender.senderName,
       domain: sender.domain,
       emailCount: sender.emailCount,
+      billingEmailCount: sender.billingEmailCount || 0,
+      hasBillingEmails: hasBilling,
       latestSubject: sender.latestSubject,
       latestDate: sender.latestDate,
       unsubscribeUrl,

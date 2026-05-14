@@ -86,7 +86,12 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
     const senderName = from.replace(/<[^>]+>/, '').replace(/"/g, '').trim() || senderEmail;
     const domain = senderEmail.split('@')[1] || '';
 
-    if (!domain || isTransactional(senderEmail, subject)) return;
+    if (!domain) return;
+
+    // Detect billing-related emails — strong signal this is a paid subscription
+    const subLower = subject.toLowerCase();
+    const billingKeywords = ['receipt', 'invoice', 'billing', 'payment', 'renewal', 'subscription', 'charged', 'order confirmation'];
+    const hasBilling = billingKeywords.some(k => subLower.includes(k));
 
     const key = domain;
     if (!senderMap.has(key)) {
@@ -100,11 +105,17 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
         unsubscribeHeader: listUnsub || null,
         oneClickSupported: !!listUnsubPost,
         snippet: msg.data.snippet || '',
+        billingEmailCount: 0,
+        hasBillingEmails: false,
       });
     }
 
     const entry = senderMap.get(key);
     entry.emailCount++;
+    if (hasBilling) {
+      entry.billingEmailCount++;
+      entry.hasBillingEmails = true;
+    }
     if (new Date(date) > new Date(entry.latestDate)) {
       entry.latestDate = date;
       entry.latestSubject = subject;
@@ -116,13 +127,6 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
   } catch {
     // silently skip individual message errors
   }
-}
-
-// Filter out obvious transactional emails (not subscriptions)
-function isTransactional(email, subject) {
-  const transactionalKeywords = ['receipt', 'invoice', 'order', 'payment', 'confirm', 'verify', 'otp', 'code'];
-  const subLower = subject.toLowerCase();
-  return transactionalKeywords.some(k => subLower.includes(k)) && !subLower.includes('subscription');
 }
 
 function chunk(arr, size) {

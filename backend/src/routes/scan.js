@@ -75,7 +75,24 @@ async function runScan(user, scanId) {
     console.log(`[scan] Classified ${subscriptions.length} subscriptions`);
     updateProgress(95);
 
-    subscriptions.sort((a, b) => b.emailCount - a.emailCount);
+    // Sort priority:
+    //   1. Paid subs with billing emails (receipts/invoices) — most important, real money
+    //   2. Other paid subs
+    //   3. One-time payments (paid, occasional/yearly frequency)
+    //   4. Recurring (monthly/weekly/daily)
+    //   5. Free subscriptions
+    const priorityScore = (s) => {
+      if (s.hasBillingEmails && s.isPaid) return 100 + s.billingEmailCount; // top — confirmed paid
+      if (s.isPaid && s.frequency === 'occasional') return 80;              // one-time payments
+      if (s.isPaid && s.frequency === 'monthly') return 70;                 // monthly paid
+      if (s.isPaid) return 60;                                              // any other paid
+      return 0;                                                             // free
+    };
+    subscriptions.sort((a, b) => {
+      const diff = priorityScore(b) - priorityScore(a);
+      if (diff !== 0) return diff;
+      return b.emailCount - a.emailCount; // tiebreak by email count
+    });
 
     const key = `subscriptions:${user.id}`;
     await redis.set(key, JSON.stringify(subscriptions), 'EX', 60 * 60 * 24 * 30);
