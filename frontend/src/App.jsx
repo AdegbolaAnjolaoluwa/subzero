@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+import { apiGet } from './api.js';
 import Landing from './pages/Landing.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 
@@ -8,7 +9,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/auth/me', { credentials: 'include' })
+    apiGet('/auth/me')
       .then(r => r.ok ? r.json() : null)
       .then(u => { setUser(u); setLoading(false); })
       .catch(() => setLoading(false));

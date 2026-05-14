@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPost, apiDelete } from '../api.js';
 
 const CATEGORIES = ['all', 'productivity', 'finance', 'shopping', 'food_delivery', 'tech', 'entertainment', 'banking', 'travel', 'news', 'other'];
 const CAT_LABELS = { all: 'All', productivity: 'Productivity', finance: 'Finance', shopping: 'Shopping', food_delivery: 'Food', tech: 'Tech', entertainment: 'Entertainment', banking: 'Banking', travel: 'Travel', news: 'News', other: 'Other' };
@@ -16,7 +17,7 @@ export default function Dashboard({ user, setUser }) {
 
   // Load existing subscriptions on mount
   useEffect(() => {
-    fetch('/subscriptions', { credentials: 'include' })
+    apiGet('/subscriptions')
       .then(r => r.json())
       .then(d => { setSubscriptions(d.subscriptions || []); setScanned(d.scanned); });
   }, []);
@@ -25,7 +26,7 @@ export default function Dashboard({ user, setUser }) {
   useEffect(() => {
     if (!jobId) return;
     const interval = setInterval(async () => {
-      const r = await fetch(`/scan/status/${jobId}`, { credentials: 'include' });
+      const r = await apiGet(`/scan/status/${jobId}`);
       const data = await r.json();
       setScanProgress(data.progress || 0);
 
@@ -34,7 +35,7 @@ export default function Dashboard({ user, setUser }) {
         setScanning(false);
         setJobId(null);
         // Reload subscriptions
-        const res = await fetch('/subscriptions', { credentials: 'include' });
+        const res = await apiGet('/subscriptions');
         const d = await res.json();
         setSubscriptions(d.subscriptions || []);
         setScanned(true);
@@ -52,13 +53,13 @@ export default function Dashboard({ user, setUser }) {
   const startScan = async () => {
     setScanning(true);
     setScanProgress(0);
-    const r = await fetch('/scan/start', { method: 'POST', credentials: 'include' });
+    const r = await apiPost('/scan/start', {});
     const data = await r.json();
     setJobId(data.jobId);
   };
 
   const unsubscribe = async (sub) => {
-    const r = await fetch(`/subscriptions/${sub.id}/unsubscribe`, { method: 'POST', credentials: 'include' });
+    const r = await apiPost(`/subscriptions/${sub.id}/unsubscribe`, {});
     const data = await r.json();
 
     setSubscriptions(prev => prev.map(s => s.id === sub.id ? { ...s, status: 'unsubscribed' } : s));
@@ -75,12 +76,12 @@ export default function Dashboard({ user, setUser }) {
   };
 
   const dismiss = async (id) => {
-    await fetch(`/subscriptions/${id}`, { method: 'DELETE', credentials: 'include' });
+    await apiDelete(`/subscriptions/${id}`);
     setSubscriptions(prev => prev.filter(s => s.id !== id));
   };
 
   const logout = async () => {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    await apiPost('/auth/logout', {});
     setUser(null);
   };
 
