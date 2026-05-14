@@ -1,56 +1,96 @@
 import express from 'express';
-import { Queue } from 'bullmq';
-import { createRedisConnection } from '../services/redis.js';
 import { requireAuth } from '../middleware/auth.js';
+import { getRedisClient } from '../services/redis.js';
+import { extractGmailSubscriptions } from '../services/gmailExtractor.js';
+import { classifySubscriptions } from '../services/classifier.js';
 
 const router = express.Router();
+const activeScans = new Map();
 
-const scanQueue = new Queue('email-scan', {
-  connection: createRedisConnection(),
-});
-
-// POST /scan/start - kick off a background scan
 router.post('/start', requireAuth, async (req, res) => {
   const user = req.session.user;
+  const scanId = `scan_${user.id}_${Date.now()}`;
 
-  try {
-    const job = await scanQueue.add('scan', {
-      userId: user.id,
-      userEmail: user.email,
-      accessToken: user.accessToken,
-      refreshToken: user.refreshToken,
-      tokenExpiry: user.tokenExpiry,
-    }, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
-
-    res.json({ jobId: job.id, status: 'queued' });
-  } catch (err) {
-    console.error('Failed to queue scan:', err);
-    res.status(500).json({ error: 'Failed to start scan' });
+  if (activeScans.has(user.id)) {
+    const existing = activeScans.get(user.id);
+    return res.json({ jobId: existing.scanId, status: 'active' });
   }
+
+  activeScans.set(user.id, { scanId, progress: 0, status: 'running' });
+  res.json({ jobId: scanId, status: 'queued' });
+
+  runScan(user, scanId).catch(err => {
+    console.error('[scan] Error:', err);
+    if (activeScans.has(user.id)) {
+      activeScans.set(user.id, { scanId, progress: 0, status: 'failed', error: err.message });
+    }
+  });
 });
 
-// GET /scan/status/:jobId - poll job status
 router.get('/status/:jobId', requireAuth, async (req, res) => {
-  try {
-    const job = await scanQueue.getJob(req.params.jobId);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
+  const user = req.session.user;
+  const scan = activeScans.get(user.id);
 
-    const state = await job.getState();
-    const progress = job.progress;
-
-    res.json({
-      jobId: job.id,
-      status: state,
-      progress: progress || 0,
-      result: state === 'completed' ? job.returnvalue : null,
-      error: state === 'failed' ? job.failedReason : null,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get job status' });
+  if (!scan || scan.scanId !== req.params.jobId) {
+    const redis = getRedisClient();
+    const cached = await redis.get(`subscriptions:${user.id}`);
+    if (cached) {
+      return res.json({ jobId: req.params.jobId, status: 'completed', progress: 100 });
+    }
+    return res.status(404).json({ error: 'Scan not found' });
   }
+
+  res.json({
+    jobId: scan.scanId,
+    status: scan.status,
+    progress: scan.progress,
+    error: scan.error || null,
+  });
 });
+
+async function runScan(user, scanId) {
+  const redis = getRedisClient();
+
+  const updateProgress = (progress) => {
+    if (activeScans.has(user.id)) {
+      activeScans.set(user.id, { scanId, progress, status: 'running' });
+    }
+  };
+
+  try {
+    updateProgress(5);
+    console.log(`[scan] Starting for user ${user.id}`);
+
+    const rawSenders = await extractGmailSubscriptions(
+      user.accessToken,
+      user.refreshToken,
+      user.tokenExpiry,
+      updateProgress
+    );
+
+    console.log(`[scan] Found ${rawSenders.length} unique senders`);
+    updateProgress(75);
+
+    const subscriptions = await classifySubscriptions(rawSenders);
+    console.log(`[scan] Classified ${subscriptions.length} subscriptions`);
+    updateProgress(95);
+
+    subscriptions.sort((a, b) => b.emailCount - a.emailCount);
+
+    const key = `subscriptions:${user.id}`;
+    await redis.set(key, JSON.stringify(subscriptions), 'EX', 60 * 60 * 24 * 30);
+
+    activeScans.set(user.id, { scanId, progress: 100, status: 'completed' });
+    console.log(`[scan] Done. ${subscriptions.length} subscriptions saved.`);
+
+    setTimeout(() => activeScans.delete(user.id), 60 * 1000);
+
+  } catch (err) {
+    console.error(`[scan] Failed:`, err);
+    activeScans.set(user.id, { scanId, progress: 0, status: 'failed', error: err.message });
+    setTimeout(() => activeScans.delete(user.id), 60 * 1000);
+    throw err;
+  }
+}
 
 export default router;
