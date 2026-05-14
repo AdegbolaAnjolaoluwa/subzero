@@ -11,7 +11,7 @@ export default function Dashboard({ user, setUser }) {
   const [scanProgress, setScanProgress] = useState(0);
   const [jobId, setJobId] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [showPaidOnly, setShowPaidOnly] = useState(false);
+  const [showAll, setShowAll] = useState(false); // false = active subs only; true = all emails
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
 
@@ -92,12 +92,14 @@ export default function Dashboard({ user, setUser }) {
 
   const filtered = subscriptions.filter(s => {
     if (filter !== 'all' && s.category !== filter) return false;
-    if (showPaidOnly && !s.isPaid) return false;
+    // Default view: only show active subscriptions (hide inactive/expired)
+    // "All emails" toggle shows everything including inactive newsletters
+    if (!showAll && s.status === 'inactive') return false;
     if (search && !s.serviceName.toLowerCase().includes(search.toLowerCase()) && !s.senderEmail.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  const active = filtered.filter(s => s.status === 'active');
+  const active = filtered.filter(s => s.status !== 'unsubscribed');
   const unsubscribed = filtered.filter(s => s.status === 'unsubscribed');
   const paidCount = subscriptions.filter(s => s.isPaid).length;
 
@@ -175,8 +177,8 @@ export default function Dashboard({ user, setUser }) {
                 style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-body)', width: 200, outline: 'none' }}
               />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={showPaidOnly} onChange={e => setShowPaidOnly(e.target.checked)} />
-                Paid only
+                <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
+                All emails
               </label>
               <button onClick={startScan} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)', padding: '7px 14px', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
                 Re-scan
@@ -234,7 +236,8 @@ function SubscriptionCard({ sub, onUnsubscribe, onDismiss, done }) {
           <div style={{ fontSize: 11, color: 'var(--muted)' }}>{sub.senderEmail}</div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {sub.isPaid && <span style={{ background: 'rgba(200,255,0,0.12)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.2)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>PAID</span>}
+          {sub.billingAmount && <span style={{ background: 'rgba(200,255,0,0.18)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.3)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 700 }}>{sub.billingAmount}</span>}
+          {sub.isPaid && !sub.billingAmount && <span style={{ background: 'rgba(200,255,0,0.12)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.2)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>PAID</span>}
           <span style={{ background: `${color}18`, color, border: `1px solid ${color}30`, fontSize: 10, padding: '2px 8px', borderRadius: 99 }}>{CAT_LABELS2[sub.category] || sub.category}</span>
         </div>
       </div>

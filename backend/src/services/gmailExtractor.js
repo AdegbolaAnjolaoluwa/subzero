@@ -93,6 +93,8 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
     const billingKeywords = ['receipt', 'invoice', 'billing', 'payment', 'renewal', 'subscription', 'charged', 'order confirmation'];
     const hasBilling = billingKeywords.some(k => subLower.includes(k));
 
+    const snippet = msg.data.snippet || '';
+
     const key = domain;
     if (!senderMap.has(key)) {
       senderMap.set(key, {
@@ -104,7 +106,9 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
         latestDate: date,
         unsubscribeHeader: listUnsub || null,
         oneClickSupported: !!listUnsubPost,
-        snippet: msg.data.snippet || '',
+        snippet,
+        subjects: [], // sample subjects for classifier context
+        snippets: [], // sample snippets containing amounts
         billingEmailCount: 0,
         hasBillingEmails: false,
       });
@@ -112,6 +116,18 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
 
     const entry = senderMap.get(key);
     entry.emailCount++;
+
+    // Keep up to 5 distinct subject samples (latest first)
+    if (entry.subjects.length < 5 && subject && !entry.subjects.includes(subject)) {
+      entry.subjects.push(subject);
+    }
+
+    // Capture snippets that mention money/amounts — useful for Gemini
+    const moneyPattern = /(?:NGN|₦|\$|USD|EUR|€|£|GBP)\s?[\d,]+(?:\.\d{2})?|paystack|flutterwave/i;
+    if (moneyPattern.test(snippet) && entry.snippets.length < 3) {
+      entry.snippets.push(snippet.slice(0, 200));
+    }
+
     if (hasBilling) {
       entry.billingEmailCount++;
       entry.hasBillingEmails = true;
