@@ -31,37 +31,25 @@ async function classifyBatch(model, senders) {
 
   const prompt = `You are an email subscription analyst.
 
-I will give you a list of email senders, their subjects, and snippets from the past 12 months.
-
-For each sender analyze the subjects/snippets and classify as:
-1. isSubscription (true/false) — a recurring paid service the user signed up for. Standalone bank alerts and one-off transactions are NOT subscriptions.
-2. serviceName — clean human readable (e.g. "Netflix" not "billing@mail.netflix.com")
+For each sender below, analyze subjects and snippets to classify:
+1. isSubscription (true/false) — a RECURRING paid service (monthly/yearly). One-off purchases, receipts forwarded from payment processors, and bank alerts are NOT subscriptions.
+2. serviceName — clean human readable (e.g. "Netflix" not "billing@mail.netflix.com"). If a sender forwards multiple services, use the ACTUAL service name (e.g. for "noreply@paystack.com — Receipt from PiggyVest" use "PiggyVest").
 3. category — one of [productivity, finance, shopping, food_delivery, banking, tech, entertainment, news, travel, health, other]
-4. isPaid (true/false) — TRUE if there's evidence of a charge: Paystack, Flutterwave, "you were charged", amounts in NGN/USD/$/₦/€/£, "receipt", "invoice", "renewed"
-5. billingAmount — the most recent visible amount as a clean string (e.g. "$15.49/mo", "NGN 5000", "₦2,500/month"), or null if no amount visible
-6. lastDebitDate — date of the most recent charge/debit/payment email visible, in "YYYY-MM-DD" format, or null
-7. nextBillingDate — date of the next scheduled charge if mentioned in any email ("renews on", "next payment", "your subscription will renew"), in "YYYY-MM-DD" format, or null
-8. status — "active" ONLY if there's a recent debit (within 45 days) OR a future next-billing date. "inactive" if last charge was over 60 days ago with no future billing date, OR if any email mentions "cancelled", "expired", "subscription ended", "no longer".
-9. isBankAlert (true/false) — TRUE if this is a bank's transaction alert (e.g. "Credit Alert", "Debit Alert", "Account Debited", "Transaction Notification") that is NOT a recurring subscription you can unsubscribe from. The bank itself is not a subscription.
+4. isPaid (true/false) — TRUE if there's a confirmed charge.
+5. billingAmount — extract the exact amount with currency from any snippet. Examples: "$15.49", "NGN 5,000", "₦2,500", "£9.99". Append "/mo" or "/yr" if you can infer the frequency. Return null ONLY if absolutely no amount is visible anywhere in subjects/snippets.
+6. frequency — one of [monthly, yearly, occasional]. "monthly" if charged each month, "yearly" if charged annually, "occasional" for one-time/irregular.
+7. lastDebitDate — most recent charge date in "YYYY-MM-DD" or null
+8. nextBillingDate — next charge date if mentioned ("renews on", "next billing", "expires") in "YYYY-MM-DD" or null
+9. status — "active" if charged within last 45 days OR has a future billing date AND no "cancelled/expired/ended" wording. Otherwise "inactive".
+10. isBankAlert (true/false) — TRUE for raw bank transaction notifications (e.g. "Credit Alert from GTB", "Debit notification", "Transaction Alert") — these are NOT subscriptions.
+
+IMPORTANT: be aggressive about finding billingAmount — even partial info like "₦2,500" should be returned. Look in BOTH subjects and snippets.
 
 Senders:
 ${senderList}
 
-Respond with ONLY a JSON array (one entry per sender, same order, same index), no markdown:
-[
-  {
-    "index": 1,
-    "isSubscription": true,
-    "serviceName": "Netflix",
-    "category": "entertainment",
-    "isPaid": true,
-    "billingAmount": "$15.49/mo",
-    "lastDebitDate": "2026-04-12",
-    "nextBillingDate": "2026-05-12",
-    "status": "active",
-    "isBankAlert": false
-  }
-]`;
+Respond with ONLY a JSON array (one entry per sender, same index), no markdown:
+[{"index":1,"isSubscription":true,"serviceName":"Netflix","category":"entertainment","isPaid":true,"billingAmount":"$15.49/mo","frequency":"monthly","lastDebitDate":"2026-04-12","nextBillingDate":"2026-05-12","status":"active","isBankAlert":false}]`;
 
   let classifications = [];
   try {
@@ -101,6 +89,17 @@ Respond with ONLY a JSON array (one entry per sender, same order, same index), n
 
     const isPaid = hasBilling || c?.isPaid || false;
 
+    // Fallback: regex-extract amount from snippets/subjects if Gemini didn't find one
+    let billingAmount = c?.billingAmount || null;
+    if (!billingAmount) {
+      const allText = [sender.latestSubject, ...(sender.subjects || []), ...(sender.snippets || [])].join(' ');
+      const amountRegex = /(NGN|₦|\$|USD|EUR|€|£|GBP|₹|INR)\s?([\d,]+(?:\.\d{2})?)/i;
+      const match = allText.match(amountRegex);
+      if (match) {
+        billingAmount = `${match[1]}${match[2].includes(',') || match[2].length > 3 ? ' ' : ''}${match[2]}`.trim();
+      }
+    }
+
     // Determine status based on real signals: last debit date + next billing date
     let status = c?.status;
     const now = Date.now();
@@ -139,7 +138,7 @@ Respond with ONLY a JSON array (one entry per sender, same order, same index), n
       serviceName: c?.serviceName || sender.senderName || sender.domain,
       category: c?.category || 'other',
       isPaid,
-      billingAmount: c?.billingAmount || null,
+      billingAmount,
       lastDebitDate: c?.lastDebitDate || null,
       nextBillingDate: c?.nextBillingDate || null,
       frequency: c?.frequency || 'occasional',

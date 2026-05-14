@@ -117,15 +117,17 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
     const entry = senderMap.get(key);
     entry.emailCount++;
 
-    // Keep up to 5 distinct subject samples (latest first)
+    // Keep up to 5 distinct subject samples
     if (entry.subjects.length < 5 && subject && !entry.subjects.includes(subject)) {
       entry.subjects.push(subject);
     }
 
-    // Capture snippets that mention money/amounts — useful for Gemini
-    const moneyPattern = /(?:NGN|₦|\$|USD|EUR|€|£|GBP)\s?[\d,]+(?:\.\d{2})?|paystack|flutterwave/i;
-    if (moneyPattern.test(snippet) && entry.snippets.length < 3) {
-      entry.snippets.push(snippet.slice(0, 200));
+    // Capture snippets — prioritize ones with money/billing info, fallback to recent ones
+    const moneyPattern = /(?:NGN|₦|\$|USD|EUR|€|£|GBP|₹|INR)\s?[\d,]+(?:\.\d{2})?|paystack|flutterwave|renew|monthly|yearly|annually/i;
+    if (snippet && entry.snippets.length < 4) {
+      if (moneyPattern.test(snippet) || entry.snippets.length < 2) {
+        entry.snippets.push(snippet.slice(0, 250));
+      }
     }
 
     if (hasBilling) {

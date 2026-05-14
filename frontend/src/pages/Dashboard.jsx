@@ -92,9 +92,14 @@ export default function Dashboard({ user, setUser }) {
 
   const filtered = subscriptions.filter(s => {
     if (filter !== 'all' && s.category !== filter) return false;
-    // Default view: only show active subscriptions (hide inactive/expired)
-    // "All emails" toggle shows everything including inactive newsletters
-    if (!showAll && s.status === 'inactive') return false;
+    // Default view: only RECURRING paid subscriptions (monthly + yearly)
+    // "All emails" toggle shows everything (newsletters, one-offs, etc.)
+    if (!showAll) {
+      if (!s.isPaid) return false;
+      if (s.status === 'inactive') return false;
+      const recurring = s.frequency === 'monthly' || s.frequency === 'yearly';
+      if (!recurring) return false;
+    }
     if (search && !s.serviceName.toLowerCase().includes(search.toLowerCase()) && !s.senderEmail.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
@@ -127,14 +132,19 @@ export default function Dashboard({ user, setUser }) {
 
         {/* Stats bar */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 32 }}>
-          {[
-            { label: 'Total found', value: subscriptions.length },
-            { label: 'Still active', value: active.length },
-            { label: 'Paid subs', value: paidCount },
-            { label: 'Unsubscribed', value: unsubscribed.length },
-          ].map(s => (
+          {(() => {
+            const recurring = subscriptions.filter(s => s.isPaid && s.status === 'active' && (s.frequency === 'monthly' || s.frequency === 'yearly'));
+            const monthly = recurring.filter(s => s.frequency === 'monthly').length;
+            const yearly = recurring.filter(s => s.frequency === 'yearly').length;
+            return [
+              { label: 'Active subscriptions', value: recurring.length, highlight: true },
+              { label: 'Monthly', value: monthly },
+              { label: 'Yearly', value: yearly },
+              { label: 'All found', value: subscriptions.length },
+            ];
+          })().map(s => (
             <div key={s.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px 20px' }}>
-              <div style={{ fontSize: 28, fontFamily: 'var(--font-display)', fontWeight: 700, color: s.label === 'Paid subs' && paidCount > 0 ? 'var(--accent)' : 'var(--text)' }}>{s.value}</div>
+              <div style={{ fontSize: 28, fontFamily: 'var(--font-display)', fontWeight: 700, color: s.highlight && s.value > 0 ? 'var(--accent)' : 'var(--text)' }}>{s.value}</div>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{s.label}</div>
             </div>
           ))}
@@ -224,53 +234,75 @@ export default function Dashboard({ user, setUser }) {
 function SubscriptionCard({ sub, onUnsubscribe, onDismiss, done }) {
   const CAT_COLORS = { productivity: '#7c6fff', finance: '#00d68f', shopping: '#ff8c42', food_delivery: '#ff4081', tech: '#4fc3f7', entertainment: '#e040fb', banking: '#00bcd4', travel: '#ffca28', news: '#78909c', other: '#546e7a' };
   const color = CAT_COLORS[sub.category] || '#546e7a';
+  const freqLabel = sub.frequency === 'monthly' ? '/mo' : sub.frequency === 'yearly' ? '/yr' : '';
+  const showAmount = sub.billingAmount;
 
   return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, transition: 'border-color 0.15s' }}
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '20px', display: 'flex', flexDirection: 'column', gap: 14, transition: 'all 0.15s', position: 'relative', overflow: 'hidden' }}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--border-hover)'}
       onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      {/* Top: service name + category pill */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{sub.serviceName}</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.serviceName}</div>
           <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.senderEmail}</div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {sub.isPaid && !sub.billingAmount && <span style={{ background: 'rgba(200,255,0,0.12)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.2)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>PAID</span>}
-          <span style={{ background: `${color}18`, color, border: `1px solid ${color}30`, fontSize: 10, padding: '2px 8px', borderRadius: 99 }}>{CAT_LABELS2[sub.category] || sub.category}</span>
-        </div>
+        <span style={{ background: `${color}18`, color, border: `1px solid ${color}30`, fontSize: 10, padding: '3px 9px', borderRadius: 99, fontWeight: 500, whiteSpace: 'nowrap' }}>{CAT_LABELS2[sub.category] || sub.category}</span>
       </div>
 
-      {/* Bold amount display */}
-      {sub.billingAmount && (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: 'var(--accent)', letterSpacing: '-1px' }}>
+      {/* Hero: the amount */}
+      {showAmount ? (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 0' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 32, color: 'var(--accent)', letterSpacing: '-1.5px', lineHeight: 1 }}>
             {sub.billingAmount}
+          </span>
+          {!sub.billingAmount.match(/\/(mo|yr|month|year)/i) && freqLabel && (
+            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 16, color: 'var(--muted)' }}>{freqLabel}</span>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 0' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: 'var(--muted)' }}>
+            Paid {sub.frequency}
           </span>
         </div>
       )}
 
-      <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-        {sub.latestSubject}
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
-        {sub.lastDebitDate && <span>💳 Last charge: {new Date(sub.lastDebitDate).toLocaleDateString()}</span>}
-        {sub.nextBillingDate && <><span>·</span><span style={{ color: 'var(--accent)' }}>↻ Next: {new Date(sub.nextBillingDate).toLocaleDateString()}</span></>}
-        {!sub.lastDebitDate && !sub.nextBillingDate && <>
-          <span>📧 {sub.emailCount} emails</span>
-          <span>·</span>
-          <span>{sub.frequency}</span>
-        </>}
-        {sub.oneClickSupported && <><span>·</span><span style={{ color: 'var(--success)' }}>1-click</span></>}
+      {/* Billing dates */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
+        {sub.lastDebitDate && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Last charge</span>
+            <span style={{ color: 'var(--text)' }}>{new Date(sub.lastDebitDate).toLocaleDateString()}</span>
+          </div>
+        )}
+        {sub.nextBillingDate && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Next billing</span>
+            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{new Date(sub.nextBillingDate).toLocaleDateString()}</span>
+          </div>
+        )}
+        {!sub.lastDebitDate && !sub.nextBillingDate && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Frequency</span>
+            <span style={{ color: 'var(--text)', textTransform: 'capitalize' }}>{sub.frequency}</span>
+          </div>
+        )}
+        {sub.oneClickSupported && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Unsubscribe</span>
+            <span style={{ color: 'var(--success)', fontWeight: 500 }}>1-click ✓</span>
+          </div>
+        )}
       </div>
 
       {!done && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          <button onClick={() => onUnsubscribe(sub)} style={{ flex: 1, background: 'var(--danger)', color: '#fff', padding: '9px 0', borderRadius: 'var(--radius-sm)', fontWeight: 600, fontSize: 13 }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+          <button onClick={() => onUnsubscribe(sub)} style={{ flex: 1, background: 'var(--danger)', color: '#fff', padding: '10px 0', borderRadius: 'var(--radius-sm)', fontWeight: 600, fontSize: 13 }}>
             Unsubscribe
           </button>
-          <button onClick={() => onDismiss(sub.id)} style={{ background: 'var(--bg3)', color: 'var(--muted)', padding: '9px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 13 }}>
+          <button onClick={() => onDismiss(sub.id)} style={{ background: 'var(--bg3)', color: 'var(--muted)', padding: '10px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', fontSize: 13 }}>
             Keep
           </button>
         </div>
