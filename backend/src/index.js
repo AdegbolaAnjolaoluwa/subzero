@@ -2,8 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
-import RedisStore from 'connect-redis';
-import { createClient } from 'redis';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import scanRoutes from './routes/scan.js';
@@ -12,6 +10,9 @@ import subscriptionRoutes from './routes/subscriptions.js';
 dotenv.config();
 
 const app = express();
+
+// Trust Render's proxy so secure cookies work
+app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(express.json());
@@ -24,6 +25,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,

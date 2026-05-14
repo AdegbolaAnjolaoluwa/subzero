@@ -56,7 +56,14 @@ router.get('/google/callback', async (req, res) => {
       provider: 'gmail',
     };
 
-    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+    // Explicitly save session before redirect to ensure cookie is set
+    req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+        return res.redirect(`${process.env.FRONTEND_URL}/?error=session_failed`);
+      }
+      res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+    });
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.redirect(`${process.env.FRONTEND_URL}/?error=auth_failed`);
