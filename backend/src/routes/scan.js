@@ -75,23 +75,16 @@ async function runScan(user, scanId) {
     console.log(`[scan] Classified ${subscriptions.length} subscriptions`);
     updateProgress(95);
 
-    // Sort priority:
-    //   1. Paid subs with billing emails (receipts/invoices) — most important, real money
-    //   2. Other paid subs
-    //   3. One-time payments (paid, occasional/yearly frequency)
-    //   4. Recurring (monthly/weekly/daily)
-    //   5. Free subscriptions
-    const priorityScore = (s) => {
-      if (s.hasBillingEmails && s.isPaid) return 100 + s.billingEmailCount; // top — confirmed paid
-      if (s.isPaid && s.frequency === 'occasional') return 80;              // one-time payments
-      if (s.isPaid && s.frequency === 'monthly') return 70;                 // monthly paid
-      if (s.isPaid) return 60;                                              // any other paid
-      return 0;                                                             // free
-    };
+    // Sort: paid first, then trials by soonest expiring
     subscriptions.sort((a, b) => {
-      const diff = priorityScore(b) - priorityScore(a);
-      if (diff !== 0) return diff;
-      return b.emailCount - a.emailCount; // tiebreak by email count
+      if (a.isPaid && !b.isPaid) return -1;
+      if (!a.isPaid && b.isPaid) return 1;
+      // Within trials: soonest expiring first
+      if (a.isTrial && b.isTrial) {
+        return (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999);
+      }
+      // Within paid: by service name alphabetical
+      return (a.serviceName || '').localeCompare(b.serviceName || '');
     });
 
     const key = `subscriptions:${user.id}`;

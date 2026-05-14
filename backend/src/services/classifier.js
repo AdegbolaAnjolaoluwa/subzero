@@ -5,7 +5,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 export async function classifySubscriptions(senders) {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-  // Process in batches of 30 to stay within token limits
   const batches = chunk(senders, 30);
   const results = [];
 
@@ -23,33 +22,44 @@ async function classifyBatch(model, senders) {
     const snippets = (s.snippets || []).join(' | ');
     return `${i + 1}. From: "${s.senderName}" <${s.senderEmail}>
    Subjects: ${subjects.map(x => `"${x}"`).join(', ')}
-   Emails in past year: ${s.emailCount}
-   Billing-related emails: ${s.billingEmailCount || 0}
-   Has unsubscribe: ${!!s.unsubscribeHeader}
-   Snippet hints: ${snippets || 'none'}`;
+   Snippets: ${snippets || 'none'}
+   Latest date: ${s.latestDate}`;
   }).join('\n\n');
 
-  const prompt = `You are an email subscription analyst.
+  const prompt = `You have email senders from a user's inbox. Analyze each and classify STRICTLY.
 
-For each sender below, analyze subjects and snippets to classify:
-1. isSubscription (true/false) — a RECURRING paid service (monthly/yearly). One-off purchases, receipts forwarded from payment processors, and bank alerts are NOT subscriptions.
-2. serviceName — clean human readable (e.g. "Netflix" not "billing@mail.netflix.com"). If a sender forwards multiple services, use the ACTUAL service name (e.g. for "noreply@paystack.com — Receipt from PiggyVest" use "PiggyVest").
-3. category — one of [productivity, finance, shopping, food_delivery, banking, tech, entertainment, news, travel, health, other]
-4. isPaid (true/false) — TRUE if there's a confirmed charge.
-5. billingAmount — extract the exact amount with currency from any snippet. Examples: "$15.49", "NGN 5,000", "₦2,500", "£9.99". Append "/mo" or "/yr" if you can infer the frequency. Return null ONLY if absolutely no amount is visible anywhere in subjects/snippets.
-6. frequency — one of [monthly, yearly, occasional]. "monthly" if charged each month, "yearly" if charged annually, "occasional" for one-time/irregular.
-7. lastDebitDate — most recent charge date in "YYYY-MM-DD" or null
-8. nextBillingDate — next charge date if mentioned ("renews on", "next billing", "expires") in "YYYY-MM-DD" or null
-9. status — "active" if charged within last 45 days OR has a future billing date AND no "cancelled/expired/ended" wording. Otherwise "inactive".
-10. isBankAlert (true/false) — TRUE for raw bank transaction notifications (e.g. "Credit Alert from GTB", "Debit notification", "Transaction Alert") — these are NOT subscriptions.
+ONLY INCLUDE:
+- Recurring paid subscriptions (monthly/yearly charges to a service)
+- Free trials that will expire or have an end date
 
-IMPORTANT: be aggressive about finding billingAmount — even partial info like "₦2,500" should be returned. Look in BOTH subjects and snippets.
+STRICTLY EXCLUDE (mark isSubscription:false):
+- Bank debit/credit alerts (GTB, Access, Zenith, UBA, ALAT, Wema, Opay, Kuda, Moniepoint, Sterling, FCMB, etc.)
+- Payment processor transaction receipts (Paystack, Flutterwave, Stripe receipts forwarded for other purchases)
+- Newsletters, marketing, promotional emails
+- Free services with no payment or trial
+- One-time purchases (orders, single charges)
+- Flight, hotel, travel receipts
+- Food delivery receipts (Uber Eats, Jumia Food, Chowdeck, etc.)
+- Receipts that are NOT for a recurring service
+
+For each sender return:
+- isSubscription (true/false) — TRUE only if recurring paid OR active free trial
+- serviceName (clean, human readable e.g. "Netflix", "ChatGPT Plus", "Notion", "Spotify")
+- type — "paid" or "trial"
+- billingAmount — string like "$15.49", "NGN 5000", "£9.99" — extract from subjects/snippets, null if not found
+- frequency — "monthly" or "yearly" (only these two for paid subs; ignore one-time)
+- trialExpiryDate — for trials only, in "YYYY-MM-DD" format, or null
+- daysRemaining — for trials only, days until expiry (integer), or null
+- lastChargeDate — most recent charge date "YYYY-MM-DD" or null
+- nextBillingDate — next charge date "YYYY-MM-DD" or null
+- status — "active" if recent charge OR future billing OR active trial; "inactive" otherwise
+- category — one of [productivity, design, ai, entertainment, gaming, health, education, other]
 
 Senders:
 ${senderList}
 
-Respond with ONLY a JSON array (one entry per sender, same index), no markdown:
-[{"index":1,"isSubscription":true,"serviceName":"Netflix","category":"entertainment","isPaid":true,"billingAmount":"$15.49/mo","frequency":"monthly","lastDebitDate":"2026-04-12","nextBillingDate":"2026-05-12","status":"active","isBankAlert":false}]`;
+Respond ONLY with a JSON array (one entry per sender, same index), no markdown:
+[{"index":1,"isSubscription":true,"serviceName":"Netflix","type":"paid","billingAmount":"$15.49","frequency":"monthly","trialExpiryDate":null,"daysRemaining":null,"lastChargeDate":"2026-04-12","nextBillingDate":"2026-05-12","status":"active","category":"entertainment"}]`;
 
   let classifications = [];
   try {
@@ -57,117 +67,70 @@ Respond with ONLY a JSON array (one entry per sender, same index), no markdown:
     const text = result.response.text().trim();
     const clean = text.replace(/```json|```/g, '').trim();
     classifications = JSON.parse(clean);
-    console.log(`[classifier] Gemini classified ${classifications.length} senders, ${classifications.filter(c => c.isSubscription).length} are subscriptions`);
+    console.log(`[classifier] Gemini: ${classifications.length} senders, ${classifications.filter(c => c.isSubscription).length} included`);
   } catch (err) {
     console.error('Gemini classification error:', err);
-    classifications = senders.map((s, i) => ({
-      index: i + 1,
-      isSubscription: !!s.unsubscribeHeader || !!s.hasBillingEmails,
-      serviceName: s.senderName || s.domain,
-      category: 'other',
-      isPaid: !!s.hasBillingEmails,
-      billingAmount: null,
-      status: 'active',
-      isBankAlert: false,
-    }));
+    return [];
   }
 
   return senders.map((sender, i) => {
     const c = classifications.find(x => x.index === i + 1);
-    const hasUnsub = !!sender.unsubscribeHeader;
-    const hasBilling = !!sender.hasBillingEmails;
+    if (!c || !c.isSubscription) return null;
 
-    // Exclude bank credit/debit alerts entirely — not subscriptions
-    if (c?.isBankAlert) return null;
-
-    // Include if Gemini says yes OR has unsubscribe header OR has billing emails
-    const include = (c?.isSubscription) || hasUnsub || hasBilling;
-    if (!include) return null;
+    // Regex amount fallback if Gemini missed it
+    let billingAmount = c.billingAmount;
+    if (!billingAmount) {
+      const allText = [sender.latestSubject, ...(sender.subjects || []), ...(sender.snippets || [])].join(' ');
+      const match = allText.match(/(NGN|₦|\$|USD|EUR|€|£|GBP|₹|INR)\s?([\d,]+(?:\.\d{2})?)/i);
+      if (match) billingAmount = `${match[1]} ${match[2]}`.replace(/\s+/g, ' ').trim();
+    }
 
     const { url: unsubscribeUrl, method: unsubscribeMethod, email: unsubscribeEmail } =
       parseUnsubscribeHeader(sender.unsubscribeHeader);
 
-    const isPaid = hasBilling || c?.isPaid || false;
-
-    // Fallback: regex-extract amount from snippets/subjects if Gemini didn't find one
-    let billingAmount = c?.billingAmount || null;
-    if (!billingAmount) {
-      const allText = [sender.latestSubject, ...(sender.subjects || []), ...(sender.snippets || [])].join(' ');
-      const amountRegex = /(NGN|₦|\$|USD|EUR|€|£|GBP|₹|INR)\s?([\d,]+(?:\.\d{2})?)/i;
-      const match = allText.match(amountRegex);
-      if (match) {
-        billingAmount = `${match[1]}${match[2].includes(',') || match[2].length > 3 ? ' ' : ''}${match[2]}`.trim();
-      }
+    // Calc days remaining for trials if Gemini didn't provide
+    let daysRemaining = c.daysRemaining;
+    if (c.type === 'trial' && !daysRemaining && c.trialExpiryDate) {
+      const diff = (new Date(c.trialExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+      daysRemaining = Math.max(0, Math.ceil(diff));
     }
 
-    // Determine status based on real signals: last debit date + next billing date
-    let status = c?.status;
-    const now = Date.now();
-    const daysSince = (dateStr) => dateStr ? (now - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24) : Infinity;
-
-    if (!status) {
-      const lastDebit = c?.lastDebitDate;
-      const nextBilling = c?.nextBillingDate;
-
-      const recentDebit = lastDebit && daysSince(lastDebit) <= 45;
-      const futureBilling = nextBilling && new Date(nextBilling).getTime() > now;
-
-      if (recentDebit || futureBilling) {
-        status = 'active';
-      } else if (daysSince(sender.latestDate) > 60) {
-        status = 'inactive';
-      } else {
-        status = 'active';
-      }
-    }
-
-    // Override: if it's a paid sub, require recent debit OR future billing to count as active
-    if (isPaid && status === 'active') {
-      const lastDebit = c?.lastDebitDate;
-      const nextBilling = c?.nextBillingDate;
-      const recentDebit = lastDebit && daysSince(lastDebit) <= 45;
-      const futureBilling = nextBilling && new Date(nextBilling).getTime() > now;
-      // If paid but no recent debit and no future billing → likely cancelled
-      if (!recentDebit && !futureBilling && daysSince(sender.latestDate) > 60) {
-        status = 'inactive';
-      }
-    }
+    // Skip expired trials
+    if (c.type === 'trial' && daysRemaining !== null && daysRemaining <= 0) return null;
 
     return {
       id: `sub_${sender.domain.replace(/\./g, '_')}_${Date.now()}_${i}`,
-      serviceName: c?.serviceName || sender.senderName || sender.domain,
-      category: c?.category || 'other',
-      isPaid,
+      serviceName: c.serviceName || sender.senderName,
+      category: c.category || 'other',
+      type: c.type || 'paid',
+      isPaid: c.type === 'paid',
+      isTrial: c.type === 'trial',
       billingAmount,
-      lastDebitDate: c?.lastDebitDate || null,
-      nextBillingDate: c?.nextBillingDate || null,
-      frequency: c?.frequency || 'occasional',
+      frequency: c.frequency || 'monthly',
+      trialExpiryDate: c.trialExpiryDate || null,
+      daysRemaining: daysRemaining ?? null,
+      lastChargeDate: c.lastChargeDate || null,
+      nextBillingDate: c.nextBillingDate || null,
       senderEmail: sender.senderEmail,
       senderName: sender.senderName,
       domain: sender.domain,
-      emailCount: sender.emailCount,
-      billingEmailCount: sender.billingEmailCount || 0,
-      hasBillingEmails: hasBilling,
       latestSubject: sender.latestSubject,
       latestDate: sender.latestDate,
       unsubscribeUrl,
       unsubscribeEmail,
       unsubscribeMethod,
       oneClickSupported: sender.oneClickSupported,
-      status,
+      status: c.status || 'active',
     };
   }).filter(Boolean);
 }
 
 function parseUnsubscribeHeader(header) {
   if (!header) return { url: null, method: 'manual', email: null };
-
   const urlMatch = header.match(/<(https?:\/\/[^>]+)>/);
   const emailMatch = header.match(/<mailto:([^>]+)>/);
-
   if (urlMatch) return { url: urlMatch[1], method: 'link', email: null };
   if (emailMatch) return { url: null, method: 'mailto', email: emailMatch[1] };
-
   return { url: null, method: 'manual', email: null };
 }
 

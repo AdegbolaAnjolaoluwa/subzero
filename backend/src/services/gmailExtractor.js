@@ -16,11 +16,10 @@ export async function extractGmailSubscriptions(accessToken, refreshToken, token
 
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-  // Search queries to find subscription-like emails from the past year
+  // Strict queries — only paid subscriptions and free trials
   const queries = [
-    'category:promotions newer_than:1y',
-    'subject:(unsubscribe OR subscription OR newsletter) newer_than:1y',
-    'subject:(receipt OR invoice OR billing OR renewal) newer_than:1y',
+    'subject:(subscription OR "subscription active" OR billing OR renewal OR "trial ends" OR "trial expires" OR "free trial") newer_than:1y',
+    'subject:(invoice OR "you have been charged" OR "payment successful" OR "payment received" OR "your receipt") newer_than:1y',
   ];
 
   const senderMap = new Map(); // domain → sender info
