@@ -28,9 +28,19 @@ async function classifyBatch(model, senders) {
 
   const prompt = `You have email senders from a user's inbox. Analyze each and classify STRICTLY.
 
-ONLY INCLUDE:
-- Recurring paid subscriptions (monthly/yearly charges to a service)
-- Free trials that will expire or have an end date
+CRITICAL RULE: Be conservative. When in doubt, set isSubscription:false. It is FAR worse to falsely include a non-subscription than to miss one.
+
+ONLY INCLUDE if you see PROOF of one of these:
+A. Recurring paid subscription — there must be CLEAR evidence of recurring monthly OR yearly billing. Evidence = multiple charges across different months from same sender, OR explicit "your monthly subscription was renewed", OR an explicit "renews on [date]" message, OR "you have been charged $X for your [monthly/yearly] plan".
+B. Active free trial — evidence = explicit "your free trial ends on [date]" or "trial expires in X days"
+
+Reject everything else. Specifically reject:
+- Single payment receipts (one-off purchases)
+- Receipts forwarded from payment processors for purchases that aren't subscriptions
+- Bank credit/debit alerts
+- Newsletters, marketing, promo
+- Free services with no payment
+- Travel, hotel, food delivery receipts
 
 STRICTLY EXCLUDE (mark isSubscription:false):
 - Bank debit/credit alerts (GTB, Access, Zenith, UBA, ALAT, Wema, Opay, Kuda, Moniepoint, Sterling, FCMB, etc.)
@@ -76,6 +86,21 @@ Respond ONLY with a JSON array (one entry per sender, same index), no markdown:
   return senders.map((sender, i) => {
     const c = classifications.find(x => x.index === i + 1);
     if (!c || !c.isSubscription) return null;
+
+    // STRICT FILTER: only include if it's a real recurring sub or active trial
+    if (c.type === 'paid') {
+      // Must be monthly or yearly — drop "occasional" / unknown
+      if (c.frequency !== 'monthly' && c.frequency !== 'yearly') return null;
+      // Must have at least one signal of recurring billing: a recent charge OR a next billing date
+      if (!c.lastChargeDate && !c.nextBillingDate) return null;
+      // Drop if status is inactive
+      if (c.status !== 'active') return null;
+    } else if (c.type === 'trial') {
+      // Must have evidence this is an actual trial
+      if (!c.trialExpiryDate && c.daysRemaining == null) return null;
+    } else {
+      return null;
+    }
 
     // Regex amount fallback if Gemini missed it
     let billingAmount = c.billingAmount;

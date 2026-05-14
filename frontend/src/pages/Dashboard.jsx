@@ -98,6 +98,26 @@ export default function Dashboard({ user, setUser }) {
   const trials = filtered.filter(s => s.isTrial).sort((a, b) => (a.daysRemaining ?? 999) - (b.daysRemaining ?? 999));
   const unsubscribed = subscriptions.filter(s => s.status === 'unsubscribed');
 
+  // Calculate monthly spend total (rough estimate by currency)
+  const monthlySpend = (() => {
+    const byCurrency = {};
+    paidSubs.forEach(s => {
+      if (!s.billingAmount) return;
+      const m = s.billingAmount.match(/(NGN|₦|\$|USD|EUR|€|£|GBP)\s?([\d,]+(?:\.\d{2})?)/i);
+      if (!m) return;
+      let symbol = m[1].toUpperCase();
+      if (symbol === 'USD') symbol = '$';
+      if (symbol === 'NGN') symbol = '₦';
+      if (symbol === 'EUR') symbol = '€';
+      if (symbol === 'GBP') symbol = '£';
+      const amount = parseFloat(m[2].replace(/,/g, ''));
+      if (isNaN(amount)) return;
+      const monthly = s.frequency === 'yearly' ? amount / 12 : amount;
+      byCurrency[symbol] = (byCurrency[symbol] || 0) + monthly;
+    });
+    return byCurrency;
+  })();
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       {toast && (
@@ -144,24 +164,56 @@ export default function Dashboard({ user, setUser }) {
           </div>
         )}
 
-        {/* Filters bar */}
+        {/* Hero spend summary + filters */}
         {scanned && subscriptions.length > 0 && (
           <>
+            {/* Spend hero */}
+            {paidSubs.length > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, var(--bg2) 0%, rgba(200,255,0,0.04) 100%)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '32px', marginBottom: 28, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 20 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontWeight: 500 }}>Monthly Spend</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
+                    {Object.keys(monthlySpend).length === 0 ? (
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 38, color: 'var(--muted)', letterSpacing: '-1.5px' }}>—</span>
+                    ) : (
+                      Object.entries(monthlySpend).map(([sym, amt]) => (
+                        <span key={sym} style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 42, color: 'var(--accent)', letterSpacing: '-2px', lineHeight: 1 }}>
+                          {sym}{amt.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 32 }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28, color: 'var(--text)' }}>{paidSubs.length}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Active subs</div>
+                  </div>
+                  {trials.length > 0 && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28, color: '#ffca28' }}>{trials.length}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Trials</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}>
               <input
-                placeholder="Search..."
+                placeholder="Search subscriptions..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-body)', width: 220, outline: 'none' }}
+                style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-body)', width: 240, outline: 'none' }}
               />
-              <button onClick={startScan} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)', padding: '7px 14px', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
-                Re-scan
+              <button onClick={startScan} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)', padding: '9px 16px', borderRadius: 'var(--radius-sm)', fontSize: 12, cursor: 'pointer' }}>
+                ↻ Re-scan
               </button>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 36 }}>
               {CATEGORIES.map(c => (
-                <button key={c} onClick={() => setFilter(c)} style={{ background: filter === c ? 'var(--accent)' : 'var(--bg2)', color: filter === c ? '#000' : 'var(--muted)', border: `1px solid ${filter === c ? 'var(--accent)' : 'var(--border)'}`, padding: '5px 14px', borderRadius: 99, fontSize: 12, fontWeight: filter === c ? 600 : 400, cursor: 'pointer' }}>
+                <button key={c} onClick={() => setFilter(c)} style={{ background: filter === c ? 'var(--accent)' : 'transparent', color: filter === c ? '#000' : 'var(--muted)', border: `1px solid ${filter === c ? 'var(--accent)' : 'var(--border)'}`, padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: filter === c ? 600 : 400, cursor: 'pointer', transition: 'all 0.15s' }}>
                   {CAT_LABELS[c]}
                 </button>
               ))}
@@ -233,26 +285,33 @@ const CAT_COLORS = { productivity: '#7c6fff', design: '#ff8c42', ai: '#c8ff00', 
 function SubCard({ sub, onUnsubscribe, onDismiss, done }) {
   const color = CAT_COLORS[sub.category] || '#546e7a';
   const freqLabel = sub.frequency === 'monthly' ? '/mo' : sub.frequency === 'yearly' ? '/yr' : '';
+  const daysToNext = sub.nextBillingDate ? Math.ceil((new Date(sub.nextBillingDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : null;
+  const initial = (sub.serviceName || '?').charAt(0).toUpperCase();
 
   return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '22px', display: 'flex', flexDirection: 'column', gap: 16, transition: 'all 0.15s' }}
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '22px', display: 'flex', flexDirection: 'column', gap: 18, transition: 'all 0.15s' }}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--border-hover)'}
       onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
 
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.serviceName}</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.senderEmail}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+          {/* Service avatar */}
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${color}40, ${color}15)`, border: `1px solid ${color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 17, color, flexShrink: 0 }}>
+            {initial}
+          </div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.serviceName}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.senderEmail}</div>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-end' }}>
-          {!done && <span style={{ background: 'rgba(0,214,143,0.12)', color: 'var(--success)', border: '1px solid rgba(0,214,143,0.25)', fontSize: 9, padding: '2px 8px', borderRadius: 99, fontWeight: 700, letterSpacing: '0.05em' }}>ACTIVE</span>}
-          <span style={{ background: `${color}18`, color, border: `1px solid ${color}30`, fontSize: 10, padding: '2px 8px', borderRadius: 99, whiteSpace: 'nowrap' }}>{CAT_LABELS[sub.category] || sub.category}</span>
-        </div>
+        {!done && <span style={{ background: 'rgba(0,214,143,0.12)', color: 'var(--success)', border: '1px solid rgba(0,214,143,0.25)', fontSize: 9, padding: '3px 8px', borderRadius: 99, fontWeight: 700, letterSpacing: '0.06em', flexShrink: 0 }}>ACTIVE</span>}
       </div>
 
+      {/* Amount hero */}
       {sub.billingAmount ? (
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 34, color: 'var(--accent)', letterSpacing: '-1.5px', lineHeight: 1 }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 36, color: 'var(--accent)', letterSpacing: '-1.8px', lineHeight: 1 }}>
             {sub.billingAmount}
           </span>
           {!sub.billingAmount.match(/\/(mo|yr|month|year)/i) && freqLabel && (
@@ -260,25 +319,33 @@ function SubCard({ sub, onUnsubscribe, onDismiss, done }) {
           )}
         </div>
       ) : (
-        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 20, color: 'var(--muted)', textTransform: 'capitalize' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: 'var(--muted)', textTransform: 'capitalize' }}>
           Paid {sub.frequency}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)' }}>
-        {sub.lastChargeDate && (
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Last charge</span>
-            <span style={{ color: 'var(--text)' }}>{new Date(sub.lastChargeDate).toLocaleDateString()}</span>
+      {/* Next billing — emphasized box */}
+      {sub.nextBillingDate && (
+        <div style={{ background: 'rgba(200,255,0,0.06)', border: '1px solid rgba(200,255,0,0.15)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Next billing</div>
+            <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 600 }}>{new Date(sub.nextBillingDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
           </div>
-        )}
-        {sub.nextBillingDate && (
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Next billing</span>
-            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{new Date(sub.nextBillingDate).toLocaleDateString()}</span>
-          </div>
-        )}
-      </div>
+          {daysToNext !== null && daysToNext >= 0 && (
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: daysToNext <= 7 ? '#ff8c42' : 'var(--accent)' }}>
+              {daysToNext}d
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Last charge */}
+      {sub.lastChargeDate && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--muted)' }}>
+          <span>Last charged</span>
+          <span style={{ color: 'var(--text)' }}>{new Date(sub.lastChargeDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+        </div>
+      )}
 
       {!done && (
         <div style={{ display: 'flex', gap: 8 }}>
