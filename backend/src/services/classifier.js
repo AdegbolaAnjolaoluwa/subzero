@@ -31,26 +31,23 @@ async function classifyBatch(model, senders) {
 
   const prompt = `You are an email subscription analyst.
 
-I will give you a list of email senders and subjects from the past 12 months.
+I will give you a list of email senders, their subjects, and snippets from the past 12 months.
 
-For each sender analyze:
-- Sender name and email address
-- Subject lines
-- Any snippets mentioning amounts, billing, renewal, subscription
-
-Then classify each one as:
-1. Is this a subscription? (true/false) — a recurring service the user signed up for. Newsletters from companies count.
-2. Service name (clean human readable, e.g. "Netflix" not "billing@mail.netflix.com")
-3. Category: one of [productivity, finance, shopping, food_delivery, banking, tech, entertainment, news, travel, health, other]
-4. Is it paid? (true/false) — look for Paystack, Flutterwave, amounts in NGN/USD/$/₦/€/£, words like "receipt", "invoice", "charged", "renewal"
-5. Billing amount if visible (string like "$9.99/mo" or "NGN 5000" or null if no amount)
-6. Status: "active" if the latest email is within 60 days AND no cancellation/expired wording, otherwise "inactive"
-7. isBankAlert: (true/false) — TRUE if this is a bank credit/debit transaction alert (e.g. "Credit Alert", "Debit Alert", "Account Debited", standalone transaction notifications from banks) that is NOT a subscription. Banks themselves are not subscriptions.
+For each sender analyze the subjects/snippets and classify as:
+1. isSubscription (true/false) — a recurring paid service the user signed up for. Standalone bank alerts and one-off transactions are NOT subscriptions.
+2. serviceName — clean human readable (e.g. "Netflix" not "billing@mail.netflix.com")
+3. category — one of [productivity, finance, shopping, food_delivery, banking, tech, entertainment, news, travel, health, other]
+4. isPaid (true/false) — TRUE if there's evidence of a charge: Paystack, Flutterwave, "you were charged", amounts in NGN/USD/$/₦/€/£, "receipt", "invoice", "renewed"
+5. billingAmount — the most recent visible amount as a clean string (e.g. "$15.49/mo", "NGN 5000", "₦2,500/month"), or null if no amount visible
+6. lastDebitDate — date of the most recent charge/debit/payment email visible, in "YYYY-MM-DD" format, or null
+7. nextBillingDate — date of the next scheduled charge if mentioned in any email ("renews on", "next payment", "your subscription will renew"), in "YYYY-MM-DD" format, or null
+8. status — "active" ONLY if there's a recent debit (within 45 days) OR a future next-billing date. "inactive" if last charge was over 60 days ago with no future billing date, OR if any email mentions "cancelled", "expired", "subscription ended", "no longer".
+9. isBankAlert (true/false) — TRUE if this is a bank's transaction alert (e.g. "Credit Alert", "Debit Alert", "Account Debited", "Transaction Notification") that is NOT a recurring subscription you can unsubscribe from. The bank itself is not a subscription.
 
 Senders:
 ${senderList}
 
-Respond with ONLY a JSON array (one entry per sender, same order), no markdown:
+Respond with ONLY a JSON array (one entry per sender, same order, same index), no markdown:
 [
   {
     "index": 1,
@@ -59,6 +56,8 @@ Respond with ONLY a JSON array (one entry per sender, same order), no markdown:
     "category": "entertainment",
     "isPaid": true,
     "billingAmount": "$15.49/mo",
+    "lastDebitDate": "2026-04-12",
+    "nextBillingDate": "2026-05-12",
     "status": "active",
     "isBankAlert": false
   }
@@ -90,8 +89,8 @@ Respond with ONLY a JSON array (one entry per sender, same order), no markdown:
     const hasUnsub = !!sender.unsubscribeHeader;
     const hasBilling = !!sender.hasBillingEmails;
 
-    // Exclude pure bank credit/debit alerts — these are transactional, not subscriptions
-    if (c?.isBankAlert && !hasUnsub) return null;
+    // Exclude bank credit/debit alerts entirely — not subscriptions
+    if (c?.isBankAlert) return null;
 
     // Include if Gemini says yes OR has unsubscribe header OR has billing emails
     const include = (c?.isSubscription) || hasUnsub || hasBilling;
@@ -102,11 +101,37 @@ Respond with ONLY a JSON array (one entry per sender, same order), no markdown:
 
     const isPaid = hasBilling || c?.isPaid || false;
 
-    // Determine status based on recency if Gemini didn't provide one
+    // Determine status based on real signals: last debit date + next billing date
     let status = c?.status;
+    const now = Date.now();
+    const daysSince = (dateStr) => dateStr ? (now - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24) : Infinity;
+
     if (!status) {
-      const daysSinceLatest = (Date.now() - new Date(sender.latestDate).getTime()) / (1000 * 60 * 60 * 24);
-      status = daysSinceLatest <= 60 ? 'active' : 'inactive';
+      const lastDebit = c?.lastDebitDate;
+      const nextBilling = c?.nextBillingDate;
+
+      const recentDebit = lastDebit && daysSince(lastDebit) <= 45;
+      const futureBilling = nextBilling && new Date(nextBilling).getTime() > now;
+
+      if (recentDebit || futureBilling) {
+        status = 'active';
+      } else if (daysSince(sender.latestDate) > 60) {
+        status = 'inactive';
+      } else {
+        status = 'active';
+      }
+    }
+
+    // Override: if it's a paid sub, require recent debit OR future billing to count as active
+    if (isPaid && status === 'active') {
+      const lastDebit = c?.lastDebitDate;
+      const nextBilling = c?.nextBillingDate;
+      const recentDebit = lastDebit && daysSince(lastDebit) <= 45;
+      const futureBilling = nextBilling && new Date(nextBilling).getTime() > now;
+      // If paid but no recent debit and no future billing → likely cancelled
+      if (!recentDebit && !futureBilling && daysSince(sender.latestDate) > 60) {
+        status = 'inactive';
+      }
     }
 
     return {
@@ -115,6 +140,8 @@ Respond with ONLY a JSON array (one entry per sender, same order), no markdown:
       category: c?.category || 'other',
       isPaid,
       billingAmount: c?.billingAmount || null,
+      lastDebitDate: c?.lastDebitDate || null,
+      nextBillingDate: c?.nextBillingDate || null,
       frequency: c?.frequency || 'occasional',
       senderEmail: sender.senderEmail,
       senderName: sender.senderName,

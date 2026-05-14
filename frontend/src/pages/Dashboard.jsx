@@ -231,25 +231,37 @@ function SubscriptionCard({ sub, onUnsubscribe, onDismiss, done }) {
       onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{sub.serviceName}</div>
-          <div style={{ fontSize: 11, color: 'var(--muted)' }}>{sub.senderEmail}</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.senderEmail}</div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {sub.billingAmount && <span style={{ background: 'rgba(200,255,0,0.18)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.3)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 700 }}>{sub.billingAmount}</span>}
           {sub.isPaid && !sub.billingAmount && <span style={{ background: 'rgba(200,255,0,0.12)', color: 'var(--accent)', border: '1px solid rgba(200,255,0,0.2)', fontSize: 10, padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>PAID</span>}
           <span style={{ background: `${color}18`, color, border: `1px solid ${color}30`, fontSize: 10, padding: '2px 8px', borderRadius: 99 }}>{CAT_LABELS2[sub.category] || sub.category}</span>
         </div>
       </div>
 
+      {/* Bold amount display */}
+      {sub.billingAmount && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: 'var(--accent)', letterSpacing: '-1px' }}>
+            {sub.billingAmount}
+          </span>
+        </div>
+      )}
+
       <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
         {sub.latestSubject}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--muted)' }}>
-        <span>📧 {sub.emailCount} emails</span>
-        <span>·</span>
-        <span>{sub.frequency}</span>
+      <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
+        {sub.lastDebitDate && <span>💳 Last charge: {new Date(sub.lastDebitDate).toLocaleDateString()}</span>}
+        {sub.nextBillingDate && <><span>·</span><span style={{ color: 'var(--accent)' }}>↻ Next: {new Date(sub.nextBillingDate).toLocaleDateString()}</span></>}
+        {!sub.lastDebitDate && !sub.nextBillingDate && <>
+          <span>📧 {sub.emailCount} emails</span>
+          <span>·</span>
+          <span>{sub.frequency}</span>
+        </>}
         {sub.oneClickSupported && <><span>·</span><span style={{ color: 'var(--success)' }}>1-click</span></>}
       </div>
 
