@@ -2,10 +2,22 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// Payment processors and banks — never subscriptions, always receipts for other merchants
+// Banks only — payment processors are handled by per-email grouping in extractor
+const BLOCKED_DOMAINS = new Set([
+  'gtbank.com', 'guarantytrustbank.com', 'accessbank.com', 'zenithbank.com',
+  'ubagroup.com', 'firstbank.com', 'fcmb.com', 'sterlingbank.com',
+  'alat.ng', 'wemabank.com', 'opay.com', 'kudabank.com', 'kuda.com',
+  'moniepoint.com', 'palmpay.com', 'chipper.com', 'chipper.cash',
+]);
+
 export async function classifySubscriptions(senders) {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-  const batches = chunk(senders, 30);
+  const eligible = senders.filter(s => !BLOCKED_DOMAINS.has(s.domain));
+  console.log(`[classifier] Skipping ${senders.length - eligible.length} blocked domains`);
+
+  const batches = chunk(eligible, 30);
   const results = [];
 
   for (const batch of batches) {
@@ -15,6 +27,7 @@ export async function classifySubscriptions(senders) {
 
   return results;
 }
+
 
 async function classifyBatch(model, senders) {
   const senderList = senders.map((s, i) => {
@@ -95,7 +108,7 @@ Respond ONLY with a JSON array (one entry per sender, same index), no markdown:
       // For monthly: require 3+ consecutive months of actual charges
       if (c.frequency === 'monthly') {
         const months = distinctChargeMonths(sender.chargeDates || []);
-        if (!hasNConsecutiveMonths(months, 3)) return null;
+        if (!hasNConsecutiveMonths(months, 2)) return null;
       }
       // For yearly: require at least 1 actual charge in past 12 months
       if (c.frequency === 'yearly') {

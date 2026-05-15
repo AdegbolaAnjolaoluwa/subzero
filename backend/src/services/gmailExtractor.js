@@ -94,7 +94,9 @@ async function fetchMessageHeaders(gmail, messageId, senderMap) {
 
     const snippet = msg.data.snippet || '';
 
-    const key = domain;
+    // Use full email as key for payment processor domains so merchants don't get merged
+    const PROCESSOR_DOMAINS = new Set(['paystack.com', 'flutterwavego.com', 'flutterwave.com', 'stripe.com', 'paddle.com', 'lemonsqueezy.com']);
+    const key = PROCESSOR_DOMAINS.has(domain) ? senderEmail : domain;
     if (!senderMap.has(key)) {
       senderMap.set(key, {
         senderName,
